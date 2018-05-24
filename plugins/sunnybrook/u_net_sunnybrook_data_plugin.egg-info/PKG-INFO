@@ -1,0 +1,10 @@
+Metadata-Version: 1.0
+Name: u-net-sunnybrook-data-plugin
+Version: 0.0.1
+Summary: A data ingestion plugin for the Sunnybrook cardiac dataset
+Home-page: UNKNOWN
+Author: Windforces
+Author-email: UNKNOWN
+License: Apache
+Description: UNKNOWN
+Platform: UNKNOWN

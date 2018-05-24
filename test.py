@@ -129,21 +129,32 @@ def Main():
             bags.append(DataTuple(image, pair.label))
 
             if not shown:
-                fig, axes = pyplot.subplots(ncols=2, figsize=(11, 6))
+                fig, axes = pyplot.subplots(ncols=3, figsize=(11, 6))
                 label = pair.label
-                label = cv2.Canny(label, threshold1=0, threshold2=1)
-                label = bfs(label)
+                # label = cv2.Canny(label, threshold1=0, threshold2=1)
+                # label = bfs(label)
 
-                axes[0].imshow(image,
+                new_label = np.empty(shape=(label.shape[0], label.shape[1], 2), dtype=np.int32)
+
+                for i in range(label.shape[0]):
+                    for j in range(label.shape[1]):
+                        if label[i, j] == 0:
+                            new_label[i, j, 0] = 1
+                            new_label[i, j, 1] = 0
+                        else:
+                            new_label[i, j, 0] = 0
+                            new_label[i, j, 1] = 1
+
+                axes[0].imshow(new_label[:, :, 0],
                                cmap=cm.gray,
                                aspect="equal",
                                interpolation="none",
-                               vmin=0, vmax=1024)
-                axes[1].imshow(label,
+                               vmin=0, vmax=1)
+                axes[1].imshow(new_label[:, :, 1],
                                cmap=cm.gray,
                                aspect="equal",
                                interpolation="none",
-                               vmin=0, vmax=255)
+                               vmin=0, vmax=1)
                 pyplot.show()
                 shown = True
 

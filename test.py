@@ -1,3 +1,56 @@
+import tensorflow as tf
+
+A = tf.random_normal(shape=(16, 2))
+soft_target = tf.nn.softmax(A)
+soft_target = tf.arg_max(soft_target, 1)
+soft_target = tf.expand_dims(soft_target, -1)
+print(soft_target.shape)
+
+init = tf.global_variables_initializer()
+
+with tf.Session() as sess:
+    sess.run(init)
+    n = sess.run([soft_target])
+    print(n)
+
+"""
+from __future__ import print_function
+
+import os
+
+import caffe
+import numpy as np
+import lmdb
+from PIL import Image
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+from caffe.proto import caffe_pb2
+
+lmdb_file = "/Users/jeasungpark/Plugins/DIGITS/digits/jobs/20180524-142734-6364/train_db/labels"
+save_path = "./data/sunnybrook/temp"
+
+with lmdb.open(lmdb_file) as lmdb_env:
+    lmdb_txn = lmdb_env.begin()
+    lmdb_cursor = lmdb_txn.cursor()
+    datum = caffe_pb2.Datum()
+
+    for key, value in lmdb_cursor:
+        datum.ParseFromString(value)
+        data = caffe.io.datum_to_array(datum)
+        data = np.clip(data, 0, 255)
+        data = data.astype(np.uint8)
+        for i in range(len(data)):
+            image = data[i, :, :]
+            if np.max(image) == 1:
+                image = image * 255
+            image = Image.fromarray(image, mode="L")
+            path = str(key) + "_channel_" + str(i) + ".jpeg"
+            image.save(os.path.join(save_path, path), format="jpeg")
+
+
+
 from __future__ import absolute_import
 
 import tensorflow as tf
@@ -167,3 +220,4 @@ def Main():
 
 if __name__ == "__main__":
     Main()
+"""

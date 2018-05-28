@@ -14,9 +14,15 @@ from tensorflow.python.keras.utils import normalize
 from tensorflow.contrib.layers.python.layers import xavier_initializer
 from tensorflow.python.layers.layers import Conv2D, Conv2DTranspose, MaxPooling2D, Dropout
 
+def normalized(frame):
+    frame = tf.squeeze(frame)
+    norm = tf.norm(frame)
+    return frame / norm
+
 class UserModel(Tower):
 
-    def _build_network(self):
+    @model_property
+    def inference(self):
         # parameters for the network
         conv_kernel_sizes = [[3, 3], [3, 3], [3, 3], [3, 3]]
         conv_strides = [[1, 1], [1, 1], [1, 1], [1, 1]]
@@ -84,39 +90,46 @@ class UserModel(Tower):
                            strides=[1, 1],
                            padding='same',
                            kernel_initializer=xavier)(image)
+        self.result_logit = logit
+        soft_target = tf.nn.softmax(logit)
+        one_hot = tf.arg_max(soft_target, dimension=3)
+        one_hot = tf.expand_dims(one_hot, -1)
+        image = tf.concat([one_hot, one_hot, one_hot], axis=3)
+        image = tf.cast(image, dtype=tf.uint8)
 
-        return logit
-
-    @model_property
-    def inference(self):
-        logit = self._build_network()
-        logit = tf.nn.softmax(logit)
-        return logit
+        return 255 * image
 
     @model_property
     def loss(self):
         # loads label data and model result
         label = self.y
         label.set_shape([None, 256, 256, 3])
-        logit = self._build_network()
+        logit = self.result_logit
         # get the labels and preprocess
-        y = tf.slice(label, begin=[0, 0, 0, 1], size=[-1, label.shape[1], label.shape[2], 1])
+        y = tf.slice(label, begin=[0, 0, 0, 1], size=[-1, label.shape[1], label.shape[2], 2])
         d = tf.slice(label, begin=[0, 0, 0, 0], size=[-1, label.shape[1], label.shape[2], 1])
         y = tf.cast(y, dtype=tf.float32)
         d = tf.cast(d, dtype=tf.float32)
-        # get the cross entropy term
-        entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logit)
+        # preparing hyperparameters
         w = 10.0
+        w_0 = 0.03 * tf.ones_like(d)
+        w_1 = 26.0 * tf.ones_like(d)
+        w_c = tf.concat([w_0, w_1], axis=3)
         sigma = 5.0
-        d = 2.0 * d + 1
-        d = tf.map_fn(lambda frame: tf.image.per_image_standardization(frame), d)
+        # computing distance to the border
+        d = 2.0 * d + 1.0
+        d = tf.map_fn(normalized, d)
+        # computing energy
         energy = w * tf.exp(-(tf.square(d) / (2.0 * sigma ** 2)))
-        loss = energy * entropy
-        loss = tf.reduce_sum(loss)
-        # adding regularization term
-        scope = tf.get_variable_scope()
-        variables = tf.trainable_variables(scope.name)
-        return self.regularize(loss, variables, 0.05, 'l2')
+        y = tf.reverse(y, axis=[3])
+        w_c = tf.multiply(y, w_c)
+        w_c = tf.reduce_sum(w_c, axis=3)
+        # computing weighted cross entropy term
+        entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logit)
+        loss = tf.multiply(energy + w_c, entropy)
+
+        return tf.reduce_mean(loss)
+
 
     def regularize(self, cost, params, reg_val, reg_type):
         """

@@ -11,75 +11,86 @@ import utils as digits
 from tensorflow.python import Tensor
 from tensorflow.python.keras.utils import normalize
 
+from tensorflow.contrib.layers.python.layers import xavier_initializer
+from tensorflow.python.layers.layers import Conv2D, Conv2DTranspose, MaxPooling2D, Dropout
+
 class UserModel(Tower):
 
-    @model_property
-    def inference(self):
+    def _build_network(self):
         # parameters for the network
         conv_kernel_sizes = [[3, 3], [3, 3], [3, 3], [3, 3]]
         conv_strides = [[1, 1], [1, 1], [1, 1], [1, 1]]
-        conv_filters = [64, 128, 256, 512]
+        conv_filters = [32, 64, 128, 256]
         pool_strides = [[2, 2], [2, 2], [2, 2], [2, 2]]
         upconv_kernel_size = [[2, 2], [2, 2], [2, 2], [2, 2]]
         upconv_strides = [[2, 2], [2, 2], [2, 2], [2, 2]]
-        upconv_filters = [512, 256, 128, 64]
+        upconv_filters = [256, 128, 64, 32]
         upconv_map_sizes = [[32, 32], [64, 64], [128, 128], [256, 256]]
         relu = tf.nn.relu
-        init = tf.random_uniform_initializer(minval=-0.1, maxval=0.1)
+        xavier = xavier_initializer()
         num_layers = 2
 
         image = self.x
-        image.set_shape([None, 256, 256, 3])
+        image.set_shape([None, self.input_shape[0], self.input_shape[1], self.input_shape[2]])
         stack = []
         # convolutional layers
         with tf.variable_scope("conv", reuse=tf.AUTO_REUSE):
-            for cell in range(len(conv_kernel_sizes)):
-                for i in range(num_layers):
-                    image = tf.layers.conv2d(inputs=image,
-                                             filters=conv_filters[cell],
-                                             kernel_size=conv_kernel_sizes[cell],
-                                             strides=conv_strides[cell],
-                                             kernel_initializer=init,
-                                             padding='same',
-                                             activation=relu)
+            for layer in range(len(conv_kernel_sizes)):
+                for cell in range(num_layers):
+                    image = Conv2D(filters=conv_filters[layer],
+                                   kernel_size=conv_kernel_sizes[layer],
+                                   strides=conv_strides[layer],
+                                   padding='same',
+                                   activation=relu,
+                                   kernel_initializer=xavier)(image)
                 stack.append(image)
-                image = tf.layers.max_pooling2d(inputs=image,
-                                                pool_size=pool_strides[cell],
-                                                strides=pool_strides[cell])
+                image = MaxPooling2D(pool_size=pool_strides[layer],
+                                     strides=pool_strides[layer])(image)
+
         # steady stage
         with tf.variable_scope("steady_conv", reuse=tf.AUTO_REUSE):
-            for i in range(num_layers):
-                image = tf.layers.conv2d(inputs=image,
-                                         filters=1024,
-                                         kernel_size=[1, 1],
-                                         strides=[1, 1],
-                                         kernel_initializer=init,
-                                         padding='same')
+            for cell in range(num_layers):
+                image = Conv2D(filters=1024,
+                               kernel_size=[3, 3],
+                               strides=[1, 1],
+                               padding='same',
+                               activation=relu,
+                               kernel_initializer=xavier)(image)
+            image = Dropout(rate=0.1)(image)
+
         # upconvolutional layers
         with tf.variable_scope("upconv", reuse=tf.AUTO_REUSE):
-            for cell in range(len(upconv_kernel_size)):
-                # copy and crop
-                copied_map = stack.pop()
-                cropped_map = tf.image.resize_bilinear(images=copied_map, size=upconv_map_sizes[cell])
-                # upconvolution
-                image = tf.layers.conv2d_transpose(inputs=image,
-                                                   filters=upconv_filters[cell],
-                                                   kernel_size=upconv_kernel_size[cell],
-                                                   strides=upconv_strides[cell],
-                                                   kernel_initializer=init)
-                # concatenate two maps
-                image = tf.concat([cropped_map, image], axis=3)
-                # additional convolutional layers
-                for i in range(num_layers):
-                    image = tf.layers.conv2d(inputs=image,
-                                             filters= upconv_filters[cell],
-                                             kernel_size=conv_kernel_sizes[cell],
-                                             strides=conv_strides[cell],
-                                             kernel_initializer=init,
-                                             padding='same',
-                                             activation=relu)
-        # final label
-        logit = tf.layers.conv2d(inputs=image, filters=2, kernel_size=[1, 1], strides=[1, 1], padding='same')
+            for layer in range(len(upconv_kernel_size)):
+                prev_image = stack.pop()
+                prev_image = tf.image.resize_bilinear(prev_image,
+                                                      size=upconv_map_sizes[layer])
+                image = Conv2DTranspose(filters=upconv_filters[layer],
+                                        kernel_size=upconv_kernel_size[layer],
+                                        strides=upconv_strides[layer],
+                                        kernel_initializer=xavier)(image)
+                image = tf.concat([image, prev_image], axis=3)
+
+                for cell in range(num_layers):
+                    image = Conv2D(filters=upconv_filters[layer],
+                                   kernel_size=conv_kernel_sizes[layer],
+                                   strides=conv_strides[layer],
+                                   padding='same',
+                                   activation=relu,
+                                   kernel_initializer=xavier)(image)
+        # getting class logit
+        with tf.variable_scope("class", reuse=tf.AUTO_REUSE):
+            logit = Conv2D(filters=2,
+                           kernel_size=[1, 1],
+                           strides=[1, 1],
+                           padding='same',
+                           kernel_initializer=xavier)(image)
+
+        return logit
+
+    @model_property
+    def inference(self):
+        logit = self._build_network()
+        logit = tf.nn.softmax(logit)
         return logit
 
     @model_property
@@ -87,39 +98,25 @@ class UserModel(Tower):
         # loads label data and model result
         label = self.y
         label.set_shape([None, 256, 256, 3])
-        logit = self.inference
-        class_prob = tf.nn.softmax(logit)
-        # get the labels and preprocess
-        y = tf.slice(label, begin=[0, 0, 0, 0], size=[-1, label.shape[1], label.shape[2], 2])
-        d = tf.slice(label, begin=[0, 0, 0, 2], size=[-1, label.shape[1], label.shape[2], 1])
+        logit = self._build_network()
+        # get the labels and preprocess
+        y = tf.slice(label, begin=[0, 0, 0, 1], size=[-1, label.shape[1], label.shape[2], 1])
+        d = tf.slice(label, begin=[0, 0, 0, 0], size=[-1, label.shape[1], label.shape[2], 1])
         y = tf.cast(y, dtype=tf.float32)
         d = tf.cast(d, dtype=tf.float32)
-        # filters the result(2 classes)
-        p = tf.multiply(class_prob, y)
-        log_p = tf.log(p)
-        log_p = tf.clip_by_value(log_p, clip_value_min=-10.0, clip_value_max=0.0)
-        log_p = tf.reduce_mean(log_p, axis=3)
-        # preparing hyperparameters
+        # get the cross entropy term
+        entropy = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y, logits=logit)
+        w = 10.0
         sigma = 5.0
-        w_0 = 10.0
-        w_c_0 = 0.03 * tf.ones_like(d, dtype=tf.float32)
-        w_c_1 = 32.3 * tf.ones_like(d, dtype=tf.float32)
-        w_c = tf.concat([w_c_0, w_c_1], axis=3)
-        w_c = tf.reduce_sum(w_c * y, axis=3)
-        # assume we use l_1 distance, that is, d_2 = d_1 + 1
         d = 2.0 * d + 1
-        mean, covariance = tf.nn.moments(d, axes=[0, 1, 2, 3])
-        d = (d - mean) / tf.sqrt(covariance)
-        energy = w_0 * tf.exp(-(tf.square(d) / (2.0 * sigma**2)))
-        energy = tf.reduce_sum(energy, axis=3)
-        weight = w_c + energy
-        loss = tf.reduce_sum(weight * log_p)
-        # regularization step
+        d = tf.map_fn(lambda frame: tf.image.per_image_standardization(frame), d)
+        energy = w * tf.exp(-(tf.square(d) / (2.0 * sigma ** 2)))
+        loss = energy * entropy
+        loss = tf.reduce_sum(loss)
+        # adding regularization term
         scope = tf.get_variable_scope()
-        params = tf.trainable_variables(scope.name)
-        loss = self.regularize(-loss, params, 0.05, 'l2')
-
-        return loss
+        variables = tf.trainable_variables(scope.name)
+        return self.regularize(loss, variables, 0.05, 'l2')
 
     def regularize(self, cost, params, reg_val, reg_type):
         """
@@ -148,5 +145,5 @@ class UserModel(Tower):
             return cost
 
     def gradientUpdate(self, grad):
-        grad = [(tf.clip_by_value(g, -1.0, 1.0), v) for g, v in grad]
+        grad = [(tf.clip_by_value(g, clip_value_min=-1.0, clip_value_max=1.0), v) for g, v in grad]
         return grad

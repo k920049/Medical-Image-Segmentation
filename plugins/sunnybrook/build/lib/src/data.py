@@ -200,6 +200,7 @@ class DataIngestion(DataIngestionInterface):
             for j in range(label.shape[1]):
                 # Only search elements in the border
                 if label[i, j] == 255:
+                    print("Processing ({}, {})".format(i, j))
                     visited = np.zeros(shape=label.shape, dtype=np.int32)
                     q = Queue.Queue()
                     # Do bfs
